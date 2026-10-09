@@ -1,0 +1,90 @@
+name: Build Mawaid APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Flutter 3.27.1
+        uses: actions/setup-flutter@v2
+        with:
+          version: '3.27.1'
+          channel: 'stable'
+          cache: true
+
+      - name: Install FFmpeg & Generate Silent Audio
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          mkdir -p assets
+          ffmpeg -f lavfi -i anullsrc=r=44100:cl=mono -t 1 -q:a 9 -acodec libmp3lame -y assets/silent.mp3
+          ls -la assets/
+
+      - name: Configure Android Permissions & Minimum SDK
+        run: |
+          # Ensure android directory exists (create skeleton if running standalone)
+          if [ ! -d "android" ]; then
+            echo "Creating Flutter android skeleton..."
+            flutter create --org com.yousef --project-name mawaid .
+          fi
+
+          # Update minSdkVersion to 23 in build.gradle
+          sed -i 's/minSdkVersion .*/minSdkVersion 23/g' android/app/build.gradle || true
+          sed -i 's/minSdk = .*/minSdk = 23/g' android/app/build.gradle || true
+          sed -i 's/flutter.minSdkVersion/23/g' android/app/build.gradle || true
+
+          # Update Kotlin version in settings.gradle if needed
+          if [ -f "android/settings.gradle" ]; then
+            sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = '\''1.9.22'\''/g' android/settings.gradle || true
+          fi
+
+          # Inject Required Permissions into AndroidManifest.xml
+          MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST_FILE" ]; then
+            PERMISSIONS='
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />'
+            
+            # Insert permissions right before <application
+            sed -i "/<application/i $PERMISSIONS" "$MANIFEST_FILE" || true
+          fi
+
+      - name: Install Flutter Dependencies
+        run: flutter pub get
+
+      - name: Build Android Release APK
+        run: flutter build apk --release
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mawaid-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error

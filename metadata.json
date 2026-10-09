@@ -1,0 +1,8 @@
+{
+  "name": "Mawaid",
+  "description": "تطبيق مواعيد ومنبه مذاكرة وبومودورو مع تسجيل الصوت وتحويل النص لكلام",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
