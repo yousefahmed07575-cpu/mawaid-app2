@@ -36,25 +36,89 @@ jobs:
           ffmpeg -f lavfi -i anullsrc=r=44100:cl=mono -t 1 -q:a 9 -acodec libmp3lame -y assets/silent.mp3
           ls -la assets/
 
-      - name: Configure Android Permissions & Minimum SDK
+      - name: Configure Android Gradle, Permissions & Repositories
         run: |
-          # Ensure android directory exists (create skeleton if running standalone)
+          # 1. Ensure android directory exists
           if [ ! -d "android" ]; then
             echo "Creating Flutter android skeleton..."
             flutter create --org com.yousef --project-name mawaid .
           fi
 
-          # Update minSdkVersion to 23 in build.gradle
+          # 2. Configure android/settings.gradle and android/build.gradle with mavenCentral and Kotlin 1.9.22
+          python3 -c '
+          import os
+
+          settings_gradle = """pluginManagement {
+              def flutterSdkPath = {
+                  def properties = new Properties()
+                  file("local.properties").withInputStream { properties.load(it) }
+                  def flutterSdkPath = properties.getProperty("flutter.sdk")
+                  assert flutterSdkPath != null : "flutter.sdk not set in local.properties"
+                  return flutterSdkPath
+              }()
+
+              includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
+
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          plugins {
+              id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+              id "com.android.application" version "8.3.2" apply false
+              id "org.jetbrains.kotlin.android" version "1.9.22" apply false
+          }
+
+          include ":app"
+          """
+          with open("android/settings.gradle", "w") as f:
+              f.write(settings_gradle)
+
+          build_gradle = """allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.buildDir = "../build"
+          subprojects {
+              project.buildDir = "${rootProject.buildDir}/${project.name}"
+          }
+          subprojects {
+              project.evaluationDependsOn(":app")
+          }
+
+          subprojects {
+              project.configurations.all {
+                  resolutionStrategy.eachDependency { details ->
+                      if (details.requested.group == "org.jetbrains.kotlin") {
+                          details.useVersion "1.9.22"
+                      }
+                  }
+              }
+          }
+
+          tasks.register("clean", Delete) {
+              delete rootProject.buildDir
+          }
+          """
+          with open("android/build.gradle", "w") as f:
+              f.write(build_gradle)
+          '
+
+          # 3. Configure android/app/build.gradle versions & Java 17
           sed -i 's/minSdkVersion .*/minSdkVersion 23/g' android/app/build.gradle || true
           sed -i 's/minSdk = .*/minSdk = 23/g' android/app/build.gradle || true
           sed -i 's/flutter.minSdkVersion/23/g' android/app/build.gradle || true
+          sed -i 's/compileSdkVersion .*/compileSdkVersion 34/g' android/app/build.gradle || true
+          sed -i 's/compileSdk = .*/compileSdk = 34/g' android/app/build.gradle || true
+          sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle || true
 
-          # Update Kotlin version in settings.gradle if needed
-          if [ -f "android/settings.gradle" ]; then
-            sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = '\''1.9.22'\''/g' android/settings.gradle || true
-          fi
-
-          # Inject Required Permissions into AndroidManifest.xml
+          # 4. Inject Required Permissions into AndroidManifest.xml
           MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST_FILE" ]; then
             PERMISSIONS='
@@ -80,7 +144,7 @@ jobs:
         run: flutter pub get
 
       - name: Build Android Release APK
-        run: flutter build apk --release
+        run: flutter build apk --release --no-tree-shake-icons
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
