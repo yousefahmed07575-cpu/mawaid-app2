@@ -283,7 +283,9 @@ jobs:
           fi
 
       - name: Install Flutter Dependencies
-        run: flutter pub get
+        run: |
+          flutter clean
+          flutter pub get
 
       - name: Build Android Release APK
         run: flutter build apk --release --no-tree-shake-icons

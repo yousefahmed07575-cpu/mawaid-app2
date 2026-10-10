@@ -30,5 +30,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/
+  # تم تعليق مسار الأصول لضمان عدم توقف عملية حزم الموارد أثناء تجميع الإصدار
+  # assets:
+  #   - assets/
