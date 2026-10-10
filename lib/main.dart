@@ -1774,8 +1774,8 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
 
   @override
   Widget build(BuildContext context) {
-    final title = widget.appointment?.title ?? widget.alarmSettings.notificationSettings.title;
-    final note = widget.appointment?.note ?? widget.alarmSettings.notificationSettings.body;
+    final title = widget.appointment?.title ?? widget.alarmSettings.notificationSettings?.title ?? 'موعد مذاكرة';
+    final note = widget.appointment?.note ?? widget.alarmSettings.notificationSettings?.body ?? '';
 
     return PopScope(
       canPop: false,
