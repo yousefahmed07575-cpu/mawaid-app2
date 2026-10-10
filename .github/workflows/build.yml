@@ -36,10 +36,10 @@ jobs:
           ffmpeg -f lavfi -i anullsrc=r=44100:cl=mono -t 1 -q:a 9 -acodec libmp3lame -y assets/silent.mp3
           ls -la assets/
 
-      - name: Configure Android Gradle, Permissions & Repositories
+      - name: Configure Android Gradle, Permissions & Flutter v2 Embedding
         run: |
           # 1. Ensure android directory exists
-          if [ ! -d "android" ]; then
+          if [ ! -d "android/app/src/main" ]; then
             echo "Creating Flutter android skeleton..."
             flutter create --org com.yousef --project-name mawaid .
           fi
@@ -131,7 +131,48 @@ jobs:
           sed -i 's/compileSdk = .*/compileSdk = 34/g' android/app/build.gradle || true
           sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle || true
 
-          # 4. Inject Required Permissions into AndroidManifest.xml
+          # 4. Enforce Flutter v2 Embedding in AndroidManifest.xml and MainActivity
+          python3 -c '
+          import os, glob
+
+          # Clean legacy MainActivity
+          main_kt = "android/app/src/main/kotlin/com/yousef/mawaid/MainActivity.kt"
+          os.makedirs(os.path.dirname(main_kt), exist_ok=True)
+          with open(main_kt, "w") as f:
+              f.write("""package com.yousef.mawaid
+
+          import io.flutter.embedding.android.FlutterActivity
+
+          class MainActivity: FlutterActivity()
+          """.replace("          ", ""))
+
+          # Remove legacy java files extending old FlutterActivity
+          for java_file in glob.glob("android/app/src/main/**/MainActivity.java", recursive=True):
+              try:
+                  os.remove(java_file)
+              except Exception:
+                  pass
+
+          # Ensure AndroidManifest has flutterEmbedding meta-data
+          manifest_file = "android/app/src/main/AndroidManifest.xml"
+          if os.path.exists(manifest_file):
+              with open(manifest_file, "r") as f:
+                  m_content = f.read()
+
+              # Replace legacy FlutterApplication if present
+              m_content = m_content.replace("io.flutter.app.FlutterApplication", "${applicationName}")
+
+              if "flutterEmbedding" not in m_content:
+                  v2_meta = "\n        <meta-data android:name=\"flutterEmbedding\" android:value=\"2\" />\n"
+                  if "<application" in m_content:
+                      parts = m_content.split("<application", 1)
+                      rest_parts = parts[1].split(">", 1)
+                      m_content = parts[0] + "<application" + rest_parts[0] + ">" + v2_meta + rest_parts[1]
+              with open(manifest_file, "w") as f:
+                  f.write(m_content)
+          '
+
+          # 5. Inject Required Permissions into AndroidManifest.xml
           MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST_FILE" ]; then
             PERMISSIONS='
