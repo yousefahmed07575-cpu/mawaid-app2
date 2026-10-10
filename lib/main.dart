@@ -25,27 +25,41 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  final appState = AppState();
+
+  try {
+    await appState.initialize();
+  } catch (e) {
+    debugPrint('AppState init error: $e');
+  }
+
   try {
     await Alarm.init();
   } catch (e) {
-    debugPrint('Error initializing Alarm: $e');
+    debugPrint('Alarm init error: $e');
   }
-
-  final appState = AppState();
-  await appState.initialize();
 
   // الاستماع لرنين المنبه لفتح شاشة المنبه فوراً
   try {
-    Alarm.ringStream.stream.listen((alarmSettings) {
-      final appointment = appState.getAppointmentById(alarmSettings.id);
-      navigatorKey.currentState?.push(
-        MaterialPageRoute(
-          builder: (context) => AlarmScreen(
-            alarmSettings: alarmSettings,
-            appointment: appointment,
-          ),
-        ),
-      );
+    Alarm.ringStream.stream.listen((dynamic alarmSettings) {
+      try {
+        if (alarmSettings != null) {
+          final int id = (alarmSettings.id is int) ? (alarmSettings.id as int) : 0;
+          final appointment = appState.getAppointmentById(id);
+          navigatorKey.currentState?.push(
+            MaterialPageRoute(
+              builder: (context) => AlarmScreen(
+                alarmId: id,
+                title: appointment?.title ?? 'موعد مذاكرة',
+                note: appointment?.note ?? '',
+                appointment: appointment,
+              ),
+            ),
+          );
+        }
+      } catch (err) {
+        debugPrint('Error navigating to AlarmScreen: $err');
+      }
     });
   } catch (e) {
     debugPrint('Error listening to Alarm ringStream: $e');
@@ -593,6 +607,9 @@ class AppState extends ChangeNotifier {
         }
       }
 
+      final String alarmTitle = app.title.trim().isNotEmpty ? app.title.trim() : 'موعد مذاكرة';
+      final String alarmBody = app.note.trim().isNotEmpty ? app.note.trim() : 'حان وقت المذاكرة والتركيز يا بطل!';
+
       final alarmSettings = AlarmSettings(
         id: app.id % 2147483647,
         dateTime: scheduledDateTime,
@@ -602,8 +619,8 @@ class AppState extends ChangeNotifier {
         androidFullScreenIntent: true,
         volumeSettings: VolumeSettings.fixed(volume: 1.0, volumeEnforced: true),
         notificationSettings: NotificationSettings(
-          title: app.title,
-          body: app.note.isNotEmpty ? app.note : 'حان وقت المذاكرة والتركيز يا بطل!',
+          title: alarmTitle,
+          body: alarmBody,
           stopButton: 'إيقاف',
         ),
       );
@@ -857,8 +874,9 @@ class _AppointmentCard extends StatelessWidget {
   String _formatRepeat() {
     switch (appointment.repeatType) {
       case RepeatType.once:
-        if (appointment.date != null) {
-          return 'مرة واحدة (${DateFormat('yyyy/MM/dd').format(appointment.date!)})';
+        final d = appointment.date;
+        if (d != null) {
+          return 'مرة واحدة (${DateFormat('yyyy/MM/dd').format(d)})';
         }
         return 'مرة واحدة';
       case RepeatType.daily:
@@ -1128,21 +1146,24 @@ class _AddEditAppointmentScreenState extends State<AddEditAppointmentScreen> {
         type: FileType.audio,
         allowMultiple: false,
       );
-      if (result != null && result.files.single.path != null) {
-        final sourceFile = File(result.files.single.path!);
-        final docsDir = await getApplicationDocumentsDirectory();
-        final ext = sourceFile.path.split('.').last;
-        final targetPath =
-            '${docsDir.path}/sound_${DateTime.now().millisecondsSinceEpoch}.$ext';
-        await sourceFile.copy(targetPath);
+      if (result != null && result.files.isNotEmpty) {
+        final filePath = result.files.first.path;
+        if (filePath != null) {
+          final sourceFile = File(filePath);
+          final docsDir = await getApplicationDocumentsDirectory();
+          final ext = sourceFile.path.split('.').last;
+          final targetPath =
+              '${docsDir.path}/sound_${DateTime.now().millisecondsSinceEpoch}.$ext';
+          await sourceFile.copy(targetPath);
 
-        setState(() {
-          _soundPath = targetPath;
-        });
+          setState(() {
+            _soundPath = targetPath;
+          });
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم استيراد الملف الصوتي وحفظه بنجاح')),
-        );
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تم استيراد الملف الصوتي وحفظه بنجاح')),
+          );
+        }
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1207,9 +1228,10 @@ class _AddEditAppointmentScreenState extends State<AddEditAppointmentScreen> {
         await _previewPlayer.stop();
         setState(() => _isPlayingPreview = false);
       } else {
-        if (_soundPath != null && File(_soundPath!).existsSync()) {
+        final path = _soundPath;
+        if (path != null && File(path).existsSync()) {
           setState(() => _isPlayingPreview = true);
-          await _previewPlayer.play(DeviceFileSource(_soundPath!));
+          await _previewPlayer.play(DeviceFileSource(path));
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('الملف الصوتي غير موجود حالياً')),
@@ -1238,7 +1260,7 @@ class _AddEditAppointmentScreenState extends State<AddEditAppointmentScreen> {
 
   // حفظ الموعد
   Future<void> _saveAppointment() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (_formKey.currentState?.validate() != true) return;
 
     final appState = context.read<AppState>();
     final newId = widget.appointment?.id ?? DateTime.now().millisecondsSinceEpoch;
@@ -1621,11 +1643,16 @@ class _AddEditAppointmentScreenState extends State<AddEditAppointmentScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                Text(
-                  _soundPath != null
-                      ? 'الملف المحدد: ${_soundPath!.split('/').last}'
-                      : 'لم يتم اختيار ملف صوتي بعد',
-                  style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+                Builder(
+                  builder: (context) {
+                    final path = _soundPath;
+                    return Text(
+                      path != null
+                          ? 'الملف المحدد: ${path.split('/').last}'
+                          : 'لم يتم اختيار ملف صوتي بعد',
+                      style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+                    );
+                  },
                 ),
                 const SizedBox(height: 12),
                 Row(
@@ -1658,12 +1685,16 @@ class _AddEditAppointmentScreenState extends State<AddEditAppointmentScreen> {
 // ══════════════════════════════════════════════════════════════════════════════
 
 class AlarmScreen extends StatefulWidget {
-  final AlarmSettings alarmSettings;
+  final int alarmId;
+  final String title;
+  final String note;
   final Appointment? appointment;
 
   const AlarmScreen({
     super.key,
-    required this.alarmSettings,
+    required this.alarmId,
+    required this.title,
+    this.note = '',
     this.appointment,
   });
 
@@ -1718,21 +1749,23 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
 
     // المحاولة 1: صوت المستخدم المخصص (ملف أو مسجل أو TTS)
     if (app != null) {
-      if (app.soundType == SoundType.tts && app.ttsText != null && app.ttsText!.isNotEmpty) {
+      final tts = app.ttsText;
+      if (app.soundType == SoundType.tts && tts != null && tts.trim().isNotEmpty) {
         try {
           await _alarmTts.setLanguage('ar-EG');
           await _alarmTts.setSpeechRate(0.5);
           await _alarmTts.setPitch(1.0);
-          await _alarmTts.speak(app.ttsText!);
+          await _alarmTts.speak(tts.trim());
           return;
         } catch (e) {
           debugPrint('Failed to speak alarm TTS: $e');
         }
       }
 
-      if (app.soundPath != null && File(app.soundPath!).existsSync()) {
+      final sound = app.soundPath;
+      if (sound != null && File(sound).existsSync()) {
         try {
-          await _ringPlayer.play(DeviceFileSource(app.soundPath!));
+          await _ringPlayer.play(DeviceFileSource(sound));
           return;
         } catch (e) {
           debugPrint('Failed to play custom user audio: $e');
@@ -1753,7 +1786,7 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
     try {
       await _ringPlayer.stop();
       await _alarmTts.stop();
-      await Alarm.stop(widget.alarmSettings.id);
+      await Alarm.stop(widget.alarmId);
     } catch (e) {
       debugPrint('Error stopping alarm: $e');
     }
@@ -1774,8 +1807,8 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
 
   @override
   Widget build(BuildContext context) {
-    final title = widget.appointment?.title ?? widget.alarmSettings.notificationSettings?.title ?? 'موعد مذاكرة';
-    final note = widget.appointment?.note ?? widget.alarmSettings.notificationSettings?.body ?? '';
+    final title = widget.title.isNotEmpty ? widget.title : (widget.appointment?.title ?? 'موعد مذاكرة');
+    final note = widget.note.isNotEmpty ? widget.note : (widget.appointment?.note ?? '');
 
     return PopScope(
       canPop: false,
@@ -2436,7 +2469,7 @@ class StatisticsScreen extends StatelessWidget {
                   ),
                   title: Text(sess.title, style: const TextStyle(fontWeight: FontWeight.bold)),
                   subtitle: Text(
-                    DateFormat('yyyy/MM/dd - hh:mm a', 'ar').format(sess.timestamp),
+                    DateFormat('yyyy/MM/dd - hh:mm a').format(sess.timestamp),
                   ),
                   trailing: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
